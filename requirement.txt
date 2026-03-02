@@ -1,0 +1,11 @@
+requests
+beautifulsoup4
+tqdm
+pandas 
+numpy
+faiss-cpu
+sentence-transformers
+fastapi
+uvicorn[standard]
+google-generativeai
+pydantic
