@@ -46,16 +46,10 @@ def build_results_dataframe(
     sliced = assessments[:max_results]
     rows = []
     for item in sliced:
-        test_types = ", ".join(item.get("test_type", []))
         rows.append(
             {
-                "url": item.get("url", ""),
-                "name": item.get("name", ""),
-                "adaptive_support": item.get("adaptive_support", "No"),
-                "description": item.get("description", ""),
-                "duration": int(item.get("duration") or 0),
-                "remote_support": item.get("remote_testing", "No"),
-                "test_type": item.get("test_type", []),
+                "name": item.get("name", ""), 
+                "url": item.get("url", "")
             }
         )
     return pd.DataFrame(rows)
