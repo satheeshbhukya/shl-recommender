@@ -1,9 +1,9 @@
 import json
-import pickle
 import os
 import numpy as np
-import faiss 
+import faiss
 import uvicorn
+from contextlib import asynccontextmanager
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 from fastapi import FastAPI, HTTPException
@@ -11,35 +11,49 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
 from bs4 import BeautifulSoup
-from typing import List 
-from contextlib import asynccontextmanager
+from typing import List
+from embedding import TextProcessor, VectorStore
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
-INDEX_PATH     = os.path.join(BASE_DIR, "output", "faiss_index.bin")
-METADATA_PATH  = os.path.join(BASE_DIR, "output", "metadata.pkl")
+DATASET_PATH   = os.path.join(BASE_DIR, "scrapper", "output", "shl_individual_tests.json")
 EMBED_MODEL    = "all-MiniLM-L6-v2"
-TOP_K_RETRIEVE = 30  
+TOP_K_RETRIEVE = 30
 TOP_K_RETURN   = 10
 
-embedder = None
-index = None
+embedder   = None
+index      = None
 assessments = None
-gemini = None
+gemini     = None
+store      = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global embedder, index, assessments, gemini
-    embedder = SentenceTransformer(EMBED_MODEL)
-    index = faiss.read_index(INDEX_PATH)
-    with open(METADATA_PATH, "rb") as f:
-        assessments = pickle.load(f)
+    global embedder, index, assessments, gemini, store
+
+    print("Loading dataset...")
+    with open(DATASET_PATH, "r", encoding="utf-8") as f:
+        assessments = json.load(f)
+
+    print("Building embeddings...")
+    processor = TextProcessor()
+    texts = [processor.build_assessment_text(a) for a in assessments]
+    embeddings = processor.get_embeddings(texts)
+
+    print("Building FAISS index...")
+    store = VectorStore()
+    store.create_index(embeddings)
+    index = store.index
+    embedder = processor.model
+
     genai.configure(api_key=GEMINI_API_KEY)
     gemini = genai.GenerativeModel("gemini-2.5-flash")
+    print("=== Ready ===")
     yield
 
-app = FastAPI(title="SHL Assessment Recommender", version="1.0.0", lifespan=lifespan)
 
+app = FastAPI(title="SHL Assessment Recommender", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,8 +62,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 class RecommendRequest(BaseModel):
-    query: str  
+    query: str
+
 
 class Assessment(BaseModel):
     url:              str
@@ -63,6 +79,7 @@ class Assessment(BaseModel):
 
 class RecommendResponse(BaseModel):
     recommended_assessments: List[Assessment]
+
 
 def fetch_url_text(url: str) -> str:
     try:
@@ -82,7 +99,7 @@ def embed_query(text: str) -> np.ndarray:
 
 
 def faiss_search(query_vec: np.ndarray, k: int) -> list:
-    scores, indices = index.search(query_vec, k)
+    scores, indices = store.search(query_vec, k)
     results = []
     for score, idx in zip(scores[0], indices[0]):
         if idx == -1:
@@ -115,7 +132,7 @@ def rerank_with_llm(query: str, candidates: list) -> list:
     CONSTRAINTS:
     1. MUST include assessments for every specific technology/skill mentioned in the query
     2. MUST NOT include personality tests unless collaboration/teamwork/leadership is mentioned
-    3. MUST NOT include cognitive tests unless analytical/reasoning/problem-solving is mentioned  
+    3. MUST NOT include cognitive tests unless analytical/reasoning/problem-solving is mentioned
     4. SELECT minimum 5, maximum 10 assessments
     5. ORDER by relevance — exact skill matches first
 
@@ -146,6 +163,7 @@ def format_assessment(item: dict) -> Assessment:
         test_type=item.get("test_type", []),
     )
 
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
@@ -167,5 +185,6 @@ def recommend(request: RecommendRequest):
         recommended_assessments=[format_assessment(a) for a in reranked]
     )
 
+
 if __name__ == "__main__":
-    uvicorn.run("api:app", host="127.0.0.1", port=8000,reload=True)
+    uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=True)

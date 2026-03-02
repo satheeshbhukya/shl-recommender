@@ -1,15 +1,11 @@
 import json
-import pickle
 import os
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 from typing import List, Tuple
 
-INPUT_PATH    = "../scrapper/output/shl_individual_tests.json"
-INDEX_PATH    = "../output/faiss_index.bin"
-METADATA_PATH = "../output/metadata.pkl"
-EMBED_MODEL   = "all-MiniLM-L6-v2"
+EMBED_MODEL = "all-MiniLM-L6-v2"
 
 
 class TextProcessor:
@@ -40,7 +36,7 @@ class TextProcessor:
 
 class VectorStore:
     def __init__(self):
-        self.index     = None
+        self.index = None
         self.dimension = None
 
     def create_index(self, embeddings: np.ndarray) -> faiss.Index:
@@ -57,31 +53,6 @@ class VectorStore:
         scores, indices = self.index.search(query_embedding, k)
         return scores, indices
 
-    def save_index(self, filepath: str):
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        faiss.write_index(self.index, filepath)
-
-    def load_index(self, filepath: str):
-        self.index     = faiss.read_index(filepath)
-        self.dimension = self.index.d
-
     def reset(self):
-        self.index     = None
+        self.index = None
         self.dimension = None
-
-
-def main():
- 
-    with open(INPUT_PATH, "r", encoding="utf-8") as f:
-        assessments = json.load(f)
-    processor = TextProcessor()
-    texts     = [processor.build_assessment_text(a) for a in assessments]
-    embeddings = processor.get_embeddings(texts)
-    store = VectorStore()
-    store.create_index(embeddings)
-    store.save_index(INDEX_PATH)
-    with open(METADATA_PATH, "wb") as f:
-        pickle.dump(assessments, f)
-
-if __name__ == "__main__":
-    main()
