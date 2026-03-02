@@ -8,4 +8,5 @@ sentence-transformers
 fastapi
 uvicorn[standard]
 google-generativeai
-pydantic
+pydantic 
+streamlit
