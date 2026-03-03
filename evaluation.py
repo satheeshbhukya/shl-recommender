@@ -120,7 +120,12 @@ def _retrieve_with_expansion(
 
     for sub_q in sub_queries:
         query_vec = processor.get_embeddings([sub_q])
-        _, indices = store.search(query_vec, k=top_k)
+        # _, indices = store.search(query_vec, k=top_k) 
+        _, indices = store.hybrid_search(
+            query_embedding=query_vec,
+            query_text=sub_q,
+            k=top_k,
+        )
         for rank, doc_id in enumerate(indices[0].tolist()):
             rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (rrf_k + rank + 1)
 

@@ -181,7 +181,52 @@ class VectorStore:
             query_embedding = query_embedding.reshape(1, -1)
         faiss.normalize_L2(query_embedding)
         k = min(k, self.index.ntotal)
-        return self.index.search(query_embedding, k)
+        return self.index.search(query_embedding, k) 
+
+    def hybrid_search(
+        self,
+        query_embedding: np.ndarray,
+        query_text: str,
+        k: int = 20,
+        dense_weight: float = 0.6,
+        sparse_weight: float = 0.4,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """RRF fusion of dense (FAISS) + sparse (BM25).
+
+        dense_weight=0.7 / sparse_weight=0.3:
+        - Dense handles semantic queries (culture fit, COO, collaboration)
+        - BM25 handles exact keyword queries (Java, SQL, Selenium, Python)
+        - 0.7/0.3 keeps semantic as primary, BM25 as a boost
+        """
+        k_retrieve = min(k * 4, self.index.ntotal)
+
+        # --- Dense retrieval ---
+        if query_embedding.ndim == 1:
+            query_embedding = query_embedding.reshape(1, -1)
+        faiss.normalize_L2(query_embedding)
+        _, dense_indices = self.index.search(query_embedding, k_retrieve)
+        dense_ranking = dense_indices[0].tolist()
+
+        # --- BM25 retrieval ---
+        bm25_ranking: List[int] = []
+        if self._bm25 is not None:
+            bm25_scores = self._bm25.get_scores(_tokenize(query_text))
+            bm25_ranking = np.argsort(bm25_scores)[::-1][:k_retrieve].tolist()
+
+        # --- Reciprocal Rank Fusion ---
+        rrf: dict = {}
+        for rank, doc_id in enumerate(dense_ranking):
+            rrf[doc_id] = rrf.get(doc_id, 0.0) + dense_weight / (RRF_K + rank + 1)
+        for rank, doc_id in enumerate(bm25_ranking):
+            rrf[doc_id] = rrf.get(doc_id, 0.0) + sparse_weight / (RRF_K + rank + 1)
+
+        top_ids = sorted(rrf, key=rrf.__getitem__, reverse=True)[:k]
+        return (
+            np.array([[rrf[i] for i in top_ids]], dtype=np.float32),
+            np.array([top_ids], dtype=np.int64),
+        )
+
+    
 
     def reset(self):
         self.index = None
