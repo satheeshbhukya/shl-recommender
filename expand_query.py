@@ -4,7 +4,7 @@ import google.generativeai as genai
 
 
 # Only expand queries longer than this — short queries don't need it
-EXPANSION_WORD_THRESHOLD = 50
+EXPANSION_WORD_THRESHOLD = 30
 
 
 def _word_count(text: str) -> int:
@@ -48,22 +48,17 @@ Return only the JSON array, nothing else."""
     except Exception:
         pass
 
-    # Fallback: rule-based extraction if Gemini fails
     return _rule_based_expansion(query)
 
 
 def _compress_query(text: str) -> str:
-    """Extract first sentence + any explicit skill mentions as a short query."""
-    # Get first non-empty line that looks like a real sentence
     lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 20]
     first = lines[0] if lines else text[:100]
-    # Truncate to ~15 words
     words = first.split()
     return " ".join(words[:15])
 
 
 def _rule_based_expansion(query: str) -> List[str]:
-    """Fallback expansion without LLM — extracts skill keywords directly."""
     sub_queries = []
 
     # Common tech skills
@@ -76,7 +71,6 @@ def _rule_based_expansion(query: str) -> List[str]:
     if tech_skills:
         sub_queries.append(" ".join(dict.fromkeys(tech_skills[:5])))  # deduplicated
 
-    # Soft skills / personality signals
     soft_signals = re.findall(
         r'\b(communication|leadership|teamwork|collaboration|interpersonal|'
         r'management|personality|culture|analytical|reasoning|verbal|numerical)\b',
@@ -85,7 +79,5 @@ def _rule_based_expansion(query: str) -> List[str]:
     if soft_signals:
         sub_queries.append(" ".join(dict.fromkeys(soft_signals[:5])))
 
-    # Role title — first 15 words usually contain the role
     sub_queries.append(_compress_query(query))
-
     return sub_queries if sub_queries else [query]

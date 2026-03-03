@@ -82,7 +82,7 @@ _NOISE_RE = re.compile(
     r"|Report Language Availability:.*"
     r"|Read more on https?://\S+",
     re.IGNORECASE | re.DOTALL,
-)
+) 
 
 
 def _clean_description(text: str) -> str:
@@ -90,7 +90,6 @@ def _clean_description(text: str) -> str:
 
 
 def _slug_to_keywords(url: str) -> str:
-    """'core-java-entry-level-new' → 'core java entry level'"""
     slug = url.rstrip("/").split("/")[-1]
     words = [w for w in slug.replace("-", " ").split()
              if w not in ("new", "v1", "v2")]
@@ -98,7 +97,6 @@ def _slug_to_keywords(url: str) -> str:
 
 
 def _get_role_context(item: dict) -> str:
-    """Look up role context string for this assessment based on name patterns."""
     name_lower = item.get("name", "").lower()
     for pattern, context in _ROLE_CONTEXT_BY_NAME.items():
         if pattern in name_lower:
@@ -123,12 +121,10 @@ class TextProcessor:
 
         slug_keywords = _slug_to_keywords(url)
 
-        # Vocab bridge — only for types with genuine vocabulary gap
         type_vocab = " ".join(
             TEST_TYPE_VOCAB[t] for t in test_types if t in TEST_TYPE_VOCAB
         ).strip()
 
-        # Role context — bridges job title in query to measurement in doc
         role_context = _get_role_context(item)
 
         duration_str = str(duration) if duration and duration > 0 else ""
@@ -176,7 +172,6 @@ class VectorStore:
         return self.index
 
     def search(self, query_embedding: np.ndarray, k: int = 10) -> Tuple[np.ndarray, np.ndarray]:
-        """Dense-only — kept for self-retrieval eval."""
         if query_embedding.ndim == 1:
             query_embedding = query_embedding.reshape(1, -1)
         faiss.normalize_L2(query_embedding)
@@ -191,14 +186,7 @@ class VectorStore:
         dense_weight: float = 0.6,
         sparse_weight: float = 0.4,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """RRF fusion of dense (FAISS) + sparse (BM25).
-
-        dense_weight=0.7 / sparse_weight=0.3:
-        - Dense handles semantic queries (culture fit, COO, collaboration)
-        - BM25 handles exact keyword queries (Java, SQL, Selenium, Python)
-        - 0.7/0.3 keeps semantic as primary, BM25 as a boost
-        """
-        k_retrieve = min(k * 4, self.index.ntotal)
+        k_retrieve = min(k *10, self.index.ntotal)
 
         # --- Dense retrieval ---
         if query_embedding.ndim == 1:
@@ -226,7 +214,6 @@ class VectorStore:
             np.array([top_ids], dtype=np.int64),
         )
 
-    
 
     def reset(self):
         self.index = None
