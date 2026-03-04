@@ -9,7 +9,7 @@ import streamlit as st
 # Point Streamlit to your deployed FastAPI backend
 API_BASE_URL = os.getenv(
     "API_BASE_URL",
-    "https://happy4040-shl-recommendation.hf.space",
+    "https://happy4040-shl-recommender.hf.space",
 )
 
 
