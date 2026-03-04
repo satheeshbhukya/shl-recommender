@@ -6,7 +6,7 @@ COPY requirement.txt .
 RUN pip install -r requirement.txt
 
 # Pre-download the model during build
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
 
 COPY . .
 

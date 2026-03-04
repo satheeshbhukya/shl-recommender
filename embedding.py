@@ -1,13 +1,13 @@
 import re
-import numpy as np
+from typing import List, Optional, Tuple
+
 import faiss
-from sentence_transformers import SentenceTransformer
-from typing import List, Tuple, Optional
+import numpy as np
 from rank_bm25 import BM25Okapi
+from sentence_transformers import SentenceTransformer
 
 EMBED_MODEL = "all-mpnet-base-v2"
 RRF_K = 60
-
 
 TEST_TYPE_VOCAB = {
     "Personality & Behavior": (
@@ -26,108 +26,55 @@ TEST_TYPE_VOCAB = {
     ),
 }
 
-
-_ROLE_CONTEXT_BY_NAME = {
-    # Ability & Aptitude — Verify series
-    "verbal ability":       "suitable for content writer copywriter analyst consultant manager communication roles",
-    "verbal reasoning":     "suitable for content writer copywriter analyst consultant manager communication roles",
-    "numerical ability":    "suitable for data analyst finance banking accounting administrative assistant clerk roles",
-    "numerical reasoning":  "suitable for data analyst finance banking accounting administrative assistant clerk roles",
-    "numerical calculation":"suitable for data analyst finance banking accounting administrative assistant clerk roles",
-    "inductive reasoning":  "suitable for analyst manager consultant strategic thinking marketing data science roles",
-    "deductive reasoning":  "suitable for analyst manager consultant logical thinking professional roles",
-    "working with information": "suitable for administrative assistant clerical data entry analyst roles",
-    "following instructions":   "suitable for administrative assistant clerical operations roles",
-    "general ability":      "suitable for graduate entry level professional analyst manager roles",
-    "verify g+":            "suitable for graduate entry level professional analyst manager roles",
-    "verify interactive g+":"suitable for graduate entry level professional analyst manager roles",
-    "process monitoring":   "suitable for operations analyst administrative quality assurance roles",
-
-    # Personality & Behavior — OPQ / Leadership series
-    "occupational personality": "suitable for leadership COO CEO director executive manager culture fit senior professional roles",
-    "opq leadership":           "suitable for COO CEO director executive senior manager leadership roles",
-    "opq team":                 "suitable for team manager COO senior leader collaboration culture roles",
-    "enterprise leadership":    "suitable for COO CEO director VP executive senior manager leadership roles",
-    "global skills":            "suitable for COO executive manager international global cross cultural leadership roles",
-    "sales profiler":           "suitable for sales manager business development account manager roles",
-    "sales transformation":     "suitable for sales manager business development territory manager roles",
-    "sales interview":          "suitable for sales representative business development account manager roles",
-    "opq mq sales":             "suitable for sales manager territory manager business development roles",
-
-    # Communication / Language
-    "interpersonal communications": "suitable for sales customer service team collaboration business analyst software developer roles requiring communication",
-    "business communication":       "suitable for sales customer service administrative professional communication roles",
-    "english comprehension":        "suitable for content writer sales customer service administrative communication roles",
-    "written english":              "suitable for content writer copywriter editor documentation technical writer roles",
-    "reading comprehension":        "suitable for content writer analyst consultant professional roles",
-    "svar":                         "suitable for sales customer service call centre communication spoken english roles",
-    "spoken english":               "suitable for sales customer service call centre communication roles",
-
-    # Data / Analytics
-    "tableau":              "suitable for data analyst business intelligence BI reporting analyst roles",
-    "data warehousing":     "suitable for data analyst data engineer ETL SQL database architect roles",
-    "microsoft excel":      "suitable for data analyst financial analyst administrative assistant marketing manager roles",
-    "sql server analysis":  "suitable for data analyst business intelligence SSAS OLAP reporting roles",
-
-    # Marketing
-    "marketing":            "suitable for marketing manager digital marketing brand manager campaign manager roles",
-    "digital advertising":  "suitable for marketing manager digital marketing performance marketing roles",
-    "search engine optimization": "suitable for SEO specialist content writer digital marketing manager roles",
-    "writex":               "suitable for sales marketing content writer email communication roles",
-}
-
-
-_NOISE_RE = re.compile(
-    r"Your use of this assessment.*?shl\.com/legal/[^\r\n]*"
-    r"|Report Language Availability:.*"
-    r"|Read more on https?://\S+",
+_NOISE_RE_1 = re.compile(
+    r"Your use of this assessment.*?shl\.com/legal/[^\r\n]*",
     re.IGNORECASE | re.DOTALL,
-) 
+)
+_NOISE_RE_2 = re.compile(
+    r"Report Language Availability:.*|Read more on https?://\S+",
+    re.IGNORECASE,
+)
+
+
+def extract_url_slug(url: str) -> str:
+    return url.rstrip("/").split("/")[-1]
 
 
 def _clean_description(text: str) -> str:
-    return _NOISE_RE.sub("", text).strip()
+    text = _NOISE_RE_1.sub("", text)
+    text = _NOISE_RE_2.sub("", text)
+    return text.strip()
 
 
 def _slug_to_keywords(url: str) -> str:
-    slug = url.rstrip("/").split("/")[-1]
-    words = [w for w in slug.replace("-", " ").split()
-             if w not in ("new", "v1", "v2")]
+    slug = extract_url_slug(url)
+    words = [w for w in slug.replace("-", " ").split() if w not in ("new", "v1", "v2")]
     return " ".join(words)
-
-
-def _get_role_context(item: dict) -> str:
-    name_lower = item.get("name", "").lower()
-    for pattern, context in _ROLE_CONTEXT_BY_NAME.items():
-        if pattern in name_lower:
-            return context
-    return ""
 
 
 def _tokenize(text: str) -> List[str]:
     return re.findall(r"\w+", text.lower())
 
 
+def _rrf_score(rank: int, k: int = RRF_K) -> float:
+    return 1.0 / (k + rank)
+
+
 class TextProcessor:
     def __init__(self, model_name: str = EMBED_MODEL):
         self.model = SentenceTransformer(model_name)
 
-    def build_assessment_text(self, item: dict) -> str:
-        name        = item.get("name", "")
-        description = _clean_description(item.get("description", ""))
-        test_types  = item.get("test_type", [])
-        duration    = item.get("duration", 0)
-        url         = item.get("url", "")
+    def _build_metadata_text(self, item: dict) -> str:
+        name         = item.get("name", "")
+        description  = _clean_description(item.get("description", ""))
+        test_types   = item.get("test_type", [])
+        duration     = item.get("duration", 0)
+        url          = item.get("url", "")
+        role_summary = item.get("role_summary", "").strip()
 
         slug_keywords = _slug_to_keywords(url)
-
-        type_vocab = " ".join(
-            TEST_TYPE_VOCAB[t] for t in test_types if t in TEST_TYPE_VOCAB
-        ).strip()
-
-        role_context = _get_role_context(item)
-
-        duration_str = str(duration) if duration and duration > 0 else ""
+        type_vocab    = " ".join(TEST_TYPE_VOCAB[t] for t in test_types if t in TEST_TYPE_VOCAB).strip()
+        duration_str  = str(duration) if duration and int(duration) > 0 else ""
 
         parts = [
             f"Assessment Name: {name}",
@@ -136,23 +83,27 @@ class TextProcessor:
             f"Test Type: {', '.join(test_types)}",
             f"Remote Testing: {item.get('remote_testing', '')}",
             f"Adaptive Support: {item.get('adaptive_support', '')}",
+            f"Role Context: {role_summary}",
         ]
         if duration_str:
             parts.append(f"Duration: {duration_str} minutes")
         if type_vocab:
             parts.append(f"Relevant For: {type_vocab}")
-        if role_context:
-            parts.append(f"Suitable For: {role_context}")
 
         return " | ".join(p for p in parts if p)
 
+    def build_assessment_text(self, item: dict) -> str:
+        return self._build_metadata_text(item)
+
     def get_embeddings(self, texts: List[str]) -> np.ndarray:
+        if not texts:
+            raise ValueError("Cannot embed an empty list of texts.")
         embeddings = self.model.encode(
             texts,
             convert_to_numpy=True,
             normalize_embeddings=True,
-            show_progress_bar=True,
-            batch_size=64,
+            show_progress_bar=len(texts) > 10,
+            batch_size=32,
         )
         return embeddings.astype(np.float32)
 
@@ -163,7 +114,7 @@ class VectorStore:
         self.dimension: Optional[int] = None
         self._bm25: Optional[BM25Okapi] = None
 
-    def create_index(self, embeddings: np.ndarray, raw_texts: Optional[List[str]] = None):
+    def create_index(self, embeddings: np.ndarray, raw_texts: Optional[List[str]] = None) -> faiss.Index:
         self.dimension = embeddings.shape[1]
         self.index = faiss.IndexFlatIP(self.dimension)
         self.index.add(embeddings)
@@ -171,51 +122,35 @@ class VectorStore:
             self._bm25 = BM25Okapi([_tokenize(t) for t in raw_texts])
         return self.index
 
-    def search(self, query_embedding: np.ndarray, k: int = 10) -> Tuple[np.ndarray, np.ndarray]:
+    def hybrid_search(self, query_embedding: np.ndarray, query_text: str, k: int = 20) -> Tuple[np.ndarray, np.ndarray]:
+        k_retrieve = min(k * 8, self.index.ntotal)
+
         if query_embedding.ndim == 1:
             query_embedding = query_embedding.reshape(1, -1)
-        faiss.normalize_L2(query_embedding)
-        k = min(k, self.index.ntotal)
-        return self.index.search(query_embedding, k) 
 
-    def hybrid_search(
-        self,
-        query_embedding: np.ndarray,
-        query_text: str,
-        k: int = 20,
-        dense_weight: float = 0.6,
-        sparse_weight: float = 0.4,
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        k_retrieve = min(k *10, self.index.ntotal)
+        dense_scores, dense_indices = self.index.search(query_embedding, k_retrieve)
+        dense_indices = dense_indices[0]
 
-        # --- Dense retrieval ---
-        if query_embedding.ndim == 1:
-            query_embedding = query_embedding.reshape(1, -1)
-        faiss.normalize_L2(query_embedding)
-        _, dense_indices = self.index.search(query_embedding, k_retrieve)
-        dense_ranking = dense_indices[0].tolist()
+        bm25_scores_full = self._bm25.get_scores(_tokenize(query_text)) if self._bm25 is not None else np.zeros(self.index.ntotal)
+        bm25_ranked      = np.argsort(bm25_scores_full)[::-1]
+        bm25_top         = bm25_ranked[:k_retrieve]
 
-        # --- BM25 retrieval ---
-        bm25_ranking: List[int] = []
-        if self._bm25 is not None:
-            bm25_scores = self._bm25.get_scores(_tokenize(query_text))
-            bm25_ranking = np.argsort(bm25_scores)[::-1][:k_retrieve].tolist()
+        candidate_ids  = sorted(set(dense_indices.tolist()).union(set(bm25_top.tolist())))
+        dense_rank_map = {int(idx): rank for rank, idx in enumerate(dense_indices)}
+        bm25_rank_map  = {int(idx): rank for rank, idx in enumerate(bm25_ranked[:k_retrieve])}
 
-        # --- Reciprocal Rank Fusion ---
-        rrf: dict = {}
-        for rank, doc_id in enumerate(dense_ranking):
-            rrf[doc_id] = rrf.get(doc_id, 0.0) + dense_weight / (RRF_K + rank + 1)
-        for rank, doc_id in enumerate(bm25_ranking):
-            rrf[doc_id] = rrf.get(doc_id, 0.0) + sparse_weight / (RRF_K + rank + 1)
+        rrf_scores = np.array([
+            _rrf_score(dense_rank_map.get(idx, k_retrieve)) + _rrf_score(bm25_rank_map.get(idx, k_retrieve))
+            for idx in candidate_ids
+        ])
 
-        top_ids = sorted(rrf, key=rrf.__getitem__, reverse=True)[:k]
-        return (
-            np.array([[rrf[i] for i in top_ids]], dtype=np.float32),
-            np.array([top_ids], dtype=np.int64),
-        )
+        top_k_idx  = np.argsort(rrf_scores)[::-1][:k]
+        top_ids    = np.array([candidate_ids[i] for i in top_k_idx], dtype=np.int64)
+        top_scores = rrf_scores[top_k_idx].astype(np.float32)
 
+        return (top_scores.reshape(1, -1), top_ids.reshape(1, -1))
 
     def reset(self):
-        self.index = None
+        self.index     = None
         self.dimension = None
-        self._bm25 = None
+        self._bm25     = None
